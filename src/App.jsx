@@ -1,29 +1,26 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
-import "./App.css";
 
 function App() {
   const [videoFile, setVideoFile] = useState(null);
   const [outputVideo, setOutputVideo] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState("");
+  const [progress, setProgress] = useState("Preparing FFmpeg runtime…");
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const [showResultDialog, setShowResultDialog] = useState(false);
 
-  const ffmpegRef = useRef(new FFmpeg());
-  const videoPreviewRef = useRef(null);
-  const outputPreviewRef = useRef(null);
+  const ffmpegRef = useState(() => new FFmpeg())[0];
 
-  // Load FFmpeg
   useEffect(() => {
     const loadFFmpeg = async () => {
-      const ffmpeg = ffmpegRef.current;
+      const ffmpeg = ffmpegRef;
 
       ffmpeg.on("log", ({ message }) => {
         console.log(message);
       });
 
-      ffmpeg.on("progress", ({ progress: prog, time }) => {
+      ffmpeg.on("progress", ({ progress: prog }) => {
         setProgress(`Processing: ${Math.round(prog * 100)}%`);
       });
 
@@ -41,7 +38,7 @@ function App() {
           ),
         });
         setFfmpegLoaded(true);
-        setProgress("FFmpeg loaded successfully");
+        setProgress("FFmpeg ready. Upload a clip.");
       } catch (error) {
         console.error("Failed to load FFmpeg:", error);
         setProgress(`Failed to load FFmpeg: ${error.message}`);
@@ -51,17 +48,27 @@ function App() {
     loadFFmpeg();
   }, []);
 
-  const handleVideoUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setVideoFile(file);
-      setOutputVideo(null);
-
-      // Preview video
-      if (videoPreviewRef.current) {
-        videoPreviewRef.current.src = URL.createObjectURL(file);
+  useEffect(() => {
+    return () => {
+      if (outputVideo) {
+        URL.revokeObjectURL(outputVideo);
       }
+    };
+  }, [outputVideo]);
+
+  const handleVideoUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
     }
+
+    setVideoFile(file);
+    setShowResultDialog(false);
+    if (outputVideo) {
+      URL.revokeObjectURL(outputVideo);
+      setOutputVideo(null);
+    }
+    setProgress("Clip loaded. Ready when you are.");
   };
 
   const applyWatermark = async () => {
@@ -71,30 +78,17 @@ function App() {
     }
 
     setIsProcessing(true);
-    setProgress("Starting...");
+    setProgress("Rendering watermark…");
 
     try {
-      const ffmpeg = ffmpegRef.current;
+      const ffmpeg = ffmpegRef;
 
-      // Write video file to FFmpeg's virtual file system
       await ffmpeg.writeFile("input.mp4", await fetchFile(videoFile));
 
-      // Fetch the watermark from the public folder
       const watermarkResponse = await fetch("/sora.png");
       const watermarkBlob = await watermarkResponse.blob();
       await ffmpeg.writeFile("watermark.png", await fetchFile(watermarkBlob));
 
-      // Complex filter explanation:
-      // [0:v] - input video
-      // scale='if(gt(iw,ih),min(1280,iw),-2):if(gt(iw,ih),-2,min(1280,ih))' - scale video to max 1280px (maintain aspect ratio)
-      // [1:v] - watermark image
-      // scale='iw/4:-1' - scale watermark to 1/4 of video width (maintain aspect ratio)
-      // overlay - position watermark with rotation every 3 seconds:
-      //   - 0-3s: center-right
-      //   - 3-6s: bottom-left
-      //   - 6-9s: top-right
-      //   - 9-12s: bottom-right
-      //   - 12-15s: top-left
       const filterComplex = [
         "[0:v]scale='if(gte(iw,ih),min(1280,iw),-2):if(gte(iw,ih),-2,min(1280,ih))'[scaled];",
         "[1:v]scale='iw/4:-1'[wm];",
@@ -102,6 +96,10 @@ function App() {
         "x='if(lt(mod(t,15),3),W-5*w/4,if(lt(mod(t,15),6),w/4,if(lt(mod(t,15),9),W-5*w/4,if(lt(mod(t,15),12),W-5*w/4,w/4))))':",
         "y='if(lt(mod(t,15),3),(H-h)/2,if(lt(mod(t,15),6),H-3*h/2,if(lt(mod(t,15),9),h/2,if(lt(mod(t,15),12),H-3*h/2,h/2))))'",
       ].join("");
+
+      if (outputVideo) {
+        URL.revokeObjectURL(outputVideo);
+      }
 
       await ffmpeg.exec([
         "-i",
@@ -117,18 +115,13 @@ function App() {
         "watermarked.mp4",
       ]);
 
-      // Read the output file
       const data = await ffmpeg.readFile("watermarked.mp4");
       const blob = new Blob([data.buffer], { type: "video/mp4" });
       const url = URL.createObjectURL(blob);
 
       setOutputVideo(url);
-      setProgress("Complete! Download your watermarked video below.");
-
-      // Preview output
-      if (outputPreviewRef.current) {
-        outputPreviewRef.current.src = url;
-      }
+      setProgress("Complete! Download your watermarked video.");
+      setShowResultDialog(true);
     } catch (error) {
       console.error("Error processing video:", error);
       setProgress("Error processing video. Check console for details.");
@@ -137,65 +130,219 @@ function App() {
     }
   };
 
+  const resetSession = () => {
+    if (outputVideo) {
+      URL.revokeObjectURL(outputVideo);
+    }
+    setVideoFile(null);
+    setOutputVideo(null);
+    setShowResultDialog(false);
+    setProgress(
+      ffmpegLoaded
+        ? "FFmpeg ready. Upload a clip."
+        : "Preparing FFmpeg runtime…"
+    );
+  };
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    if (showResultDialog) {
+      document.body.classList.add("overflow-hidden");
+    } else {
+      document.body.classList.remove("overflow-hidden");
+    }
+
+    return () => {
+      document.body.classList.remove("overflow-hidden");
+    };
+  }, [showResultDialog]);
+
   return (
-    <div className="app">
-      <h1>Video Watermarker</h1>
-      <p className="subtitle">
-        Add Sora watermark to your videos directly in the browser
-      </p>
-
-      <div className="status">{progress && <p>{progress}</p>}</div>
-
-      <div className="upload-section">
-        <div className="upload-box">
-          <h3>Upload Video</h3>
-          <input
-            type="file"
-            accept="video/*"
-            onChange={handleVideoUpload}
-            disabled={isProcessing}
-          />
-          {videoFile && (
-            <div className="preview">
-              <p>Selected: {videoFile.name}</p>
-              <video ref={videoPreviewRef} controls width="300" />
-            </div>
-          )}
-        </div>
-
-        <div className="upload-box">
-          <h3>Watermark Info</h3>
-          <div className="preview">
-            <img src="/sora.png" alt="Sora watermark" width="200" />
-            <p style={{ marginTop: "1rem" }}>
-              Watermark will rotate between corners every 3 seconds
-            </p>
-            <p style={{ fontSize: "0.9rem", color: "#888" }}>
-              Size: 1/4 of video width
-            </p>
-          </div>
-        </div>
+    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute left-[-140px] top-[-120px] h-64 w-64 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="absolute right-[-180px] top-1/2 h-[20rem] w-[20rem] rounded-full bg-indigo-500/10 blur-3xl" />
       </div>
 
-      <button
-        className="process-btn"
-        onClick={applyWatermark}
-        disabled={!videoFile || isProcessing || !ffmpegLoaded}
-      >
-        {isProcessing ? "Processing..." : "Apply Watermark"}
-      </button>
+      <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col px-6 pb-16 pt-14">
+        <header className="text-center">
+          <h1 className="text-4xl font-semibold tracking-tight sm:text-[2.75rem]">
+            Sora Watermarker
+          </h1>
+          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-400 sm:text-base">
+            Add the Sora watermark to any video.
+          </p>
+        </header>
 
-      {outputVideo && (
-        <div className="output-section">
-          <h3>Result</h3>
-          <video ref={outputPreviewRef} controls width="500" />
-          <a
-            href={outputVideo}
-            download="watermarked-video.mp4"
-            className="download-btn"
-          >
-            Download Watermarked Video
-          </a>
+        {progress && (
+          <div className="mt-10 flex justify-center">
+            <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-4 py-2 text-xs font-medium text-sky-300">
+              <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-sky-400" />
+              {progress}
+            </span>
+          </div>
+        )}
+
+        <main className="mt-12 flex-1">
+          <section className="flex flex-col gap-8 rounded-3xl border border-slate-900/70 bg-slate-950/60 p-10 shadow-[0_20px_70px_-60px_rgba(56,189,248,0.9)] backdrop-blur-sm">
+            <div className="space-y-3 text-left">
+              <h2 className="text-lg font-medium text-white">
+                Upload your footage
+              </h2>
+              <p className="text-sm text-slate-400">
+                Supports MP4 and MOV. Larger files can take a moment while
+                FFmpeg runs locally.
+              </p>
+            </div>
+
+            <label className="group relative block cursor-pointer overflow-hidden rounded-2xl border border-dashed border-slate-800 bg-slate-950/80 p-8 transition hover:border-sky-500/60">
+              <input
+                type="file"
+                accept="video/*"
+                onChange={handleVideoUpload}
+                disabled={isProcessing}
+                className="sr-only"
+              />
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-full border border-slate-800 bg-slate-900/60 text-slate-400 transition group-hover:border-sky-500/50 group-hover:text-sky-300">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    className="h-7 w-7"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 16V7m0 0-3 3m3-3 3 3"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M5 19h14"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-white">
+                    {videoFile ? "Replace video" : "Drop or browse your video"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {videoFile ? videoFile.name : "We keep it on-device"}
+                  </p>
+                </div>
+              </div>
+            </label>
+
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-slate-500">
+                {videoFile
+                  ? "Ready to watermark."
+                  : "Upload a clip to enable watermarking."}
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <button
+                  onClick={applyWatermark}
+                  disabled={!videoFile || isProcessing || !ffmpegLoaded}
+                  className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-400 via-sky-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-500/30 transition hover:from-sky-300 hover:to-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isProcessing ? "Processing…" : "Apply Sora watermark"}
+                </button>
+                {outputVideo && (
+                  <a
+                    href={outputVideo}
+                    download="watermarked-video.mp4"
+                    className="inline-flex items-center justify-center rounded-full border border-sky-500/40 px-6 py-3 text-sm font-semibold text-sky-200 transition hover:border-sky-400 hover:text-white"
+                  >
+                    Download watermarked video
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={resetSession}
+                disabled={isProcessing && !outputVideo}
+                className="text-xs font-medium text-slate-500 transition hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Reset session
+              </button>
+            </div>
+          </section>
+        </main>
+      </div>
+
+      {outputVideo && showResultDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-6 backdrop-blur-sm">
+          <div className="relative w-full max-w-3xl rounded-3xl border border-slate-900 bg-slate-950/90 p-6 shadow-2xl">
+            <button
+              type="button"
+              aria-label="Close result"
+              onClick={() => setShowResultDialog(false)}
+              className="absolute right-6 top-6 text-slate-500 transition hover:text-slate-200"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                className="h-5 w-5"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m6 6 12 12M18 6 6 18"
+                />
+              </svg>
+            </button>
+
+            <div className="space-y-4 pr-6">
+              <div>
+                <h3 className="text-lg font-semibold text-white">
+                  Watermarked result
+                </h3>
+                <p className="text-sm text-slate-400">
+                  Preview your render, then download instantly.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-900/70 bg-black/50 p-3">
+                <video
+                  key={outputVideo}
+                  src={outputVideo}
+                  controls
+                  className="h-full w-full max-h-[420px] rounded-xl border border-slate-900/80 bg-black object-contain"
+                />
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-xs font-medium uppercase tracking-[0.3em] text-slate-500">
+                  Ready to ship
+                </span>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <a
+                    href={outputVideo}
+                    download="watermarked-video.mp4"
+                    className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-400 via-sky-500 to-indigo-500 px-5 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-500/40 transition hover:from-sky-300 hover:to-indigo-400"
+                  >
+                    Download watermarked video
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setShowResultDialog(false)}
+                    className="inline-flex items-center justify-center rounded-full border border-slate-700 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:border-slate-600 hover:text-white"
+                  >
+                    Keep editing
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
