@@ -1,60 +1,20 @@
-import { useState, useEffect } from "react";
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { useState } from "react";
+import {
+  Input,
+  Output,
+  Conversion,
+  BufferTarget,
+  Mp4OutputFormat,
+  BlobSource,
+  ALL_FORMATS,
+} from "mediabunny";
 
 function App() {
   const [videoFile, setVideoFile] = useState(null);
   const [outputVideo, setOutputVideo] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState("Preparing FFmpeg runtime…");
-  const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const [progress, setProgress] = useState("Ready to watermark videos");
   const [showResultDialog, setShowResultDialog] = useState(false);
-
-  const ffmpegRef = useState(() => new FFmpeg())[0];
-
-  useEffect(() => {
-    const loadFFmpeg = async () => {
-      const ffmpeg = ffmpegRef;
-
-      ffmpeg.on("log", ({ message }) => {
-        console.log(message);
-      });
-
-      ffmpeg.on("progress", ({ progress: prog }) => {
-        setProgress(`Processing: ${Math.round(prog * 100)}%`);
-      });
-
-      try {
-        const baseURL =
-          "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm";
-        await ffmpeg.load({
-          coreURL: await toBlobURL(
-            `${baseURL}/ffmpeg-core.js`,
-            "text/javascript"
-          ),
-          wasmURL: await toBlobURL(
-            `${baseURL}/ffmpeg-core.wasm`,
-            "application/wasm"
-          ),
-        });
-        setFfmpegLoaded(true);
-        setProgress("FFmpeg ready. Upload a clip.");
-      } catch (error) {
-        console.error("Failed to load FFmpeg:", error);
-        setProgress(`Failed to load FFmpeg: ${error.message}`);
-      }
-    };
-
-    loadFFmpeg();
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (outputVideo) {
-        URL.revokeObjectURL(outputVideo);
-      }
-    };
-  }, [outputVideo]);
 
   const handleVideoUpload = (event) => {
     const file = event.target.files?.[0];
@@ -72,7 +32,7 @@ function App() {
   };
 
   const applyWatermark = async () => {
-    if (!videoFile || !ffmpegLoaded) {
+    if (!videoFile) {
       alert("Please upload a video file");
       return;
     }
@@ -81,42 +41,96 @@ function App() {
     setProgress("Rendering watermark…");
 
     try {
-      const ffmpeg = ffmpegRef;
+      // Load watermark image
+      const watermarkImage = new Image();
+      watermarkImage.src = "/sora.png";
+      await new Promise((resolve) => {
+        watermarkImage.onload = resolve;
+      });
 
-      await ffmpeg.writeFile("input.mp4", await fetchFile(videoFile));
+      // Create input from file
+      const input = new Input({
+        formats: ALL_FORMATS,
+        source: new BlobSource(videoFile),
+      });
 
-      const watermarkResponse = await fetch("/sora.png");
-      const watermarkBlob = await watermarkResponse.blob();
-      await ffmpeg.writeFile("watermark.png", await fetchFile(watermarkBlob));
+      // Create output with buffer target
+      const output = new Output({
+        format: new Mp4OutputFormat(),
+        target: new BufferTarget(),
+      });
 
-      const filterComplex = [
-        "[0:v]scale='if(gte(iw,ih),min(1280,iw),-2):if(gte(iw,ih),-2,min(1280,ih))'[scaled];",
-        "[1:v]scale='iw/4:-1'[wm];",
-        "[scaled][wm]overlay=",
-        "x='if(lt(mod(t,15),3),W-5*w/4,if(lt(mod(t,15),6),w/4,if(lt(mod(t,15),9),W-5*w/4,if(lt(mod(t,15),12),W-5*w/4,w/4))))':",
-        "y='if(lt(mod(t,15),3),(H-h)/2,if(lt(mod(t,15),6),H-3*h/2,if(lt(mod(t,15),9),h/2,if(lt(mod(t,15),12),H-3*h/2,h/2))))'",
-      ].join("");
+      // Create canvas context for watermark compositing
+      let ctx = null;
 
-      if (outputVideo) {
-        URL.revokeObjectURL(outputVideo);
-      }
+      const conversion = await Conversion.init({
+        input,
+        output,
+        video: {
+          process: (sample) => {
+            if (!ctx) {
+              // Create canvas for compositing
+              const canvas = new OffscreenCanvas(
+                sample.displayWidth,
+                sample.displayHeight
+              );
+              ctx = canvas.getContext("2d");
+            }
 
-      await ffmpeg.exec([
-        "-i",
-        "input.mp4",
-        "-i",
-        "watermark.png",
-        "-filter_complex",
-        filterComplex,
-        "-codec:a",
-        "copy",
-        "-preset",
-        "ultrafast",
-        "watermarked.mp4",
-      ]);
+            // Clear canvas
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-      const data = await ffmpeg.readFile("watermarked.mp4");
-      const blob = new Blob([data.buffer], { type: "video/mp4" });
+            // Draw original video frame
+            sample.draw(ctx, 0, 0);
+
+            // Calculate watermark size (25% of video width)
+            const wmWidth = ctx.canvas.width / 4;
+            const wmHeight =
+              (watermarkImage.height / watermarkImage.width) * wmWidth;
+
+            // Get current timestamp in seconds
+            const t = sample.timestamp;
+
+            // Calculate position based on animation (15 second cycle)
+            const cycle = t % 15;
+            let x, y;
+
+            if (cycle < 3) {
+              // Bottom-right: x = W - 5*w/4, y = (H-h)/2
+              x = ctx.canvas.width - (5 * wmWidth) / 4;
+              y = (ctx.canvas.height - wmHeight) / 2;
+            } else if (cycle < 6) {
+              // Bottom-left: x = w/4, y = H - 3*h/2
+              x = wmWidth / 4;
+              y = ctx.canvas.height - (3 * wmHeight) / 2;
+            } else if (cycle < 9) {
+              // Top-right: x = W - 5*w/4, y = h/2
+              x = ctx.canvas.width - (5 * wmWidth) / 4;
+              y = wmHeight / 2;
+            } else if (cycle < 12) {
+              // Top-right (different y): x = W - 5*w/4, y = H - 3*h/2
+              x = ctx.canvas.width - (5 * wmWidth) / 4;
+              y = ctx.canvas.height - (3 * wmHeight) / 2;
+            } else {
+              // Bottom-left (different y): x = w/4, y = h/2
+              x = wmWidth / 4;
+              y = wmHeight / 2;
+            }
+
+            // Draw watermark
+            ctx.drawImage(watermarkImage, x, y, wmWidth, wmHeight);
+
+            return ctx.canvas;
+          },
+        },
+      });
+
+      // Execute conversion
+      await conversion.execute();
+
+      // Get result buffer
+      const resultBuffer = output.target.buffer;
+      const blob = new Blob([resultBuffer], { type: "video/mp4" });
       const url = URL.createObjectURL(blob);
 
       setOutputVideo(url);
@@ -137,28 +151,8 @@ function App() {
     setVideoFile(null);
     setOutputVideo(null);
     setShowResultDialog(false);
-    setProgress(
-      ffmpegLoaded
-        ? "FFmpeg ready. Upload a clip."
-        : "Preparing FFmpeg runtime…"
-    );
+    setProgress("Ready to watermark videos");
   };
-
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-
-    if (showResultDialog) {
-      document.body.classList.add("overflow-hidden");
-    } else {
-      document.body.classList.remove("overflow-hidden");
-    }
-
-    return () => {
-      document.body.classList.remove("overflow-hidden");
-    };
-  }, [showResultDialog]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
@@ -193,8 +187,7 @@ function App() {
                 Upload your footage
               </h2>
               <p className="text-sm text-slate-400">
-                Supports MP4 and MOV. Larger files can take a moment while
-                FFmpeg runs locally.
+                Supports MP4 and MOV. Powered by Mediabunny for fast processing.
               </p>
             </div>
 
@@ -248,7 +241,7 @@ function App() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <button
                   onClick={applyWatermark}
-                  disabled={!videoFile || isProcessing || !ffmpegLoaded}
+                  disabled={!videoFile || isProcessing}
                   className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-400 via-sky-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-500/30 transition hover:from-sky-300 hover:to-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? "Processing…" : "Apply Sora watermark"}
