@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ChangeEvent } from "react";
 import {
   Input,
   Output,
@@ -10,13 +11,13 @@ import {
 } from "mediabunny";
 
 function App() {
-  const [videoFile, setVideoFile] = useState(null);
-  const [outputVideo, setOutputVideo] = useState(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [outputVideo, setOutputVideo] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState("Ready to watermark videos");
   const [showResultDialog, setShowResultDialog] = useState(false);
 
-  const handleVideoUpload = (event) => {
+  const handleVideoUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -44,8 +45,8 @@ function App() {
       // Load watermark image
       const watermarkImage = new Image();
       watermarkImage.src = "/sora.png";
-      await new Promise((resolve) => {
-        watermarkImage.onload = resolve;
+      await new Promise<void>((resolve) => {
+        watermarkImage.onload = () => resolve();
       });
 
       // Create input from file
@@ -61,7 +62,7 @@ function App() {
       });
 
       // Create canvas context for watermark compositing
-      let ctx = null;
+      let ctx: OffscreenCanvasRenderingContext2D | null = null;
 
       const conversion = await Conversion.init({
         input,
@@ -75,6 +76,9 @@ function App() {
                 sample.displayHeight
               );
               ctx = canvas.getContext("2d");
+              if (!ctx) {
+                throw new Error("Failed to get 2d context");
+              }
             }
 
             // Clear canvas
@@ -93,7 +97,7 @@ function App() {
 
             // Calculate position based on animation (15 second cycle)
             const cycle = t % 15;
-            let x, y;
+            let x: number, y: number;
 
             if (cycle < 3) {
               // Bottom-right: x = W - 5*w/4, y = (H-h)/2
@@ -130,6 +134,9 @@ function App() {
 
       // Get result buffer
       const resultBuffer = output.target.buffer;
+      if (!resultBuffer) {
+        throw new Error("Failed to get result buffer");
+      }
       const blob = new Blob([resultBuffer], { type: "video/mp4" });
       const url = URL.createObjectURL(blob);
 
@@ -343,3 +350,4 @@ function App() {
 }
 
 export default App;
+
