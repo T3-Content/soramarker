@@ -14,7 +14,7 @@ function App() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [outputVideo, setOutputVideo] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState("Ready to watermark videos");
+  const [status, setStatus] = useState<string | null>(null);
   const [showResultDialog, setShowResultDialog] = useState(false);
 
   const handleVideoUpload = (event: ChangeEvent<HTMLInputElement>) => {
@@ -29,7 +29,7 @@ function App() {
       URL.revokeObjectURL(outputVideo);
       setOutputVideo(null);
     }
-    setProgress("Clip loaded. Ready when you are.");
+    setStatus("Clip loaded. Ready when you are.");
   };
 
   const applyWatermark = async () => {
@@ -39,7 +39,7 @@ function App() {
     }
 
     setIsProcessing(true);
-    setProgress("Rendering watermark…");
+    setStatus("Rendering watermark…");
 
     try {
       // Load watermark image
@@ -141,11 +141,11 @@ function App() {
       const url = URL.createObjectURL(blob);
 
       setOutputVideo(url);
-      setProgress("Complete! Download your watermarked video.");
+      setStatus("Complete! Download your watermarked video.");
       setShowResultDialog(true);
     } catch (error) {
       console.error("Error processing video:", error);
-      setProgress("Error processing video. Check console for details.");
+      setStatus("Error processing video. Check console for details.");
     } finally {
       setIsProcessing(false);
     }
@@ -158,7 +158,7 @@ function App() {
     setVideoFile(null);
     setOutputVideo(null);
     setShowResultDialog(false);
-    setProgress("Ready to watermark videos");
+    setStatus(null);
   };
 
   return (
@@ -177,15 +177,6 @@ function App() {
             Add the Sora watermark to any video.
           </p>
         </header>
-
-        {progress && (
-          <div className="mt-10 flex justify-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-4 py-2 text-xs font-medium text-sky-300">
-              <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-sky-400" />
-              {progress}
-            </span>
-          </div>
-        )}
 
         <main className="mt-12 flex-1">
           <section className="flex flex-col gap-8 rounded-3xl border border-slate-900/70 bg-slate-950/60 p-10 shadow-[0_20px_70px_-60px_rgba(56,189,248,0.9)] backdrop-blur-sm">
@@ -239,17 +230,18 @@ function App() {
               </div>
             </label>
 
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm text-slate-500">
-                {videoFile
-                  ? "Ready to watermark."
-                  : "Upload a clip to enable watermarking."}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+              <div className="flex-1 min-w-0 truncate text-sm text-slate-500">
+                {status ||
+                  (videoFile
+                    ? "Ready to watermark."
+                    : "Upload a clip to enable watermarking.")}
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex items-center gap-3 shrink-0">
                 <button
                   onClick={applyWatermark}
                   disabled={!videoFile || isProcessing}
-                  className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-400 via-sky-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-500/30 transition hover:from-sky-300 hover:to-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center rounded-md bg-sky-500 px-5 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? "Processing…" : "Apply Sora watermark"}
                 </button>
@@ -257,9 +249,9 @@ function App() {
                   <a
                     href={outputVideo}
                     download="watermarked-video.mp4"
-                    className="inline-flex items-center justify-center rounded-full border border-sky-500/40 px-6 py-3 text-sm font-semibold text-sky-200 transition hover:border-sky-400 hover:text-white"
+                    className="inline-flex items-center justify-center rounded-md border border-slate-700 px-5 py-2.5 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:text-white"
                   >
-                    Download watermarked video
+                    Download
                   </a>
                 )}
               </div>
@@ -276,6 +268,30 @@ function App() {
             </div>
           </section>
         </main>
+
+        <footer className="mt-16 flex justify-center">
+          <a
+            href="https://github.com/T3-Content/soramarker"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-300"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-5 w-5"
+            >
+              <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.183 5.183 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+              <path d="M9 18c-4.51 2-5-2-7-2" />
+            </svg>
+            GitHub
+          </a>
+        </footer>
       </div>
 
       {outputVideo && showResultDialog && (
@@ -350,4 +366,3 @@ function App() {
 }
 
 export default App;
-
