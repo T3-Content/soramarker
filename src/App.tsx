@@ -127,6 +127,10 @@ function App() {
             return ctx.canvas;
           },
         },
+        audio: {
+          // Pass through audio unchanged
+          process: (sample) => sample,
+        },
       });
 
       // Execute conversion
